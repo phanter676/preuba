@@ -56,62 +56,18 @@ Servicios externos
 El proyecto utiliza una arquitectura monolítica en el backend, organizada mediante capas y paquetes funcionales.
 El frontend está separado en un directorio independiente, pero consume los servicios REST proporcionados por Spring Boot.
 No se trata de una arquitectura de microservicios: el monitoreo, la autenticación, la administración y las notificaciones se ejecutan dentro de la misma aplicación backend.
-Diagrama de arquitectura
-                 USUARIO
-                    |
-                    v
-          +--------------------+
-          |   FRONTEND REACT   |
-          |                    |
-          | Dashboard          |
-          | Cámaras            |
-          | Técnicos           |
-          | Historial          |
-          | Autenticación      |
-          +--------------------+
-                    |
-                    | HTTP / JSON
-                    | JWT
-                    v
-          +--------------------+
-          |   SPRING BOOT      |
-          |                    |
-          | Controllers        |
-          | Services           |
-          | Security           |
-          | DTO / Mappers      |
-          +--------------------+
-                    |
-          +---------+----------+
-          |                    |
-          v                    v
- +------------------+  +------------------+
- |   REPOSITORIES   |  | MONITOREO         |
- |                  |  |                  |
- | CamaraRepository |  | PingVerificador  |
- | TecnicoRepository|  | TcpVerificador   |
- | HistorialRepo    |  | MacVerificador   |
- | UsuarioRepository|  | EvaluarEstado    |
- +------------------+  +------------------+
-          |                    |
-          v                    v
- +------------------+  +------------------+
- |      MYSQL       |  | RED DE CÁMARAS   |
- |                  |  |                  |
- | cámaras          |  | IP               |
- | usuarios         |  | Puerto TCP       |
- | técnicos         |  | MAC / ARP        |
- | historial        |  +------------------+
- +------------------+
-                              |
-                              v
-                    +--------------------+
-                    |   NOTIFICACIONES   |
-                    |                    |
-                    | WhatsApp           |
-                    | Telegram           |
-                    | Consola            |
-                    +--------------------+
+Diagrama de arquitectura:
+
+```mermaid
+flowchart LR
+    user[Usuario] --> frontend["Frontend React<br/>Dashboard · Cámaras · Técnicos<br/>Historial · Autenticación"]
+    frontend -->|HTTP / JSON · JWT| backend["Spring Boot<br/>Controllers · Services<br/>Security · DTO / Mappers"]
+    backend --> repositories["Repositories<br/>Cámaras · Técnicos<br/>Historial · Usuarios"]
+    repositories --> database[("MySQL<br/>Cámaras · Usuarios<br/>Técnicos · Historial")]
+    backend --> monitoring["Monitoreo<br/>Ping · TCP · MAC<br/>Evaluación de estado"]
+    monitoring --> cameras["Red de cámaras<br/>IP · Puerto TCP · MAC / ARP"]
+    monitoring --> notifications["Notificaciones<br/>WhatsApp · Telegram · Consola"]
+```
 Responsabilidad de cada capa
 Controller: recibe las peticiones HTTP, obtiene los parámetros y delega las operaciones a los servicios.
 Service: contiene la lógica de negocio y coordina las operaciones entre repositorios y otros componentes.
@@ -126,6 +82,8 @@ ________________________________________
 2. ESTRUCTURA DEL REPOSITORIO Y DIRECTORIOS
 2.1. Estructura general
 El repositorio está organizado de la siguiente manera:
+
+```text
 camaraProyecto-main/
 │
 ├── README.md
@@ -181,6 +139,7 @@ camaraProyecto-main/
         ├── utils/
         ├── App.jsx
         └── main.jsx
+```
 2.2. Backend: organización de paquetes
 config/
 Contiene las configuraciones generales de Spring.
@@ -338,40 +297,20 @@ ________________________________________
 3. FLUJOS DE DATOS Y PROCESOS CRÍTICOS
 3.1. Flujo de una petición REST
 Una solicitud normal sigue el siguiente recorrido:
-Cliente React
-     |
-     v
-Solicitud HTTP
-     |
-     v
-JwtAuthenticationFilter
-     |
-     v
-Spring Security
-     |
-     v
-Controller
-     |
-     v
-Service
-     |
-     v
-Repository
-     |
-     v
-MySQL
-     |
-     v
-Service
-     |
-     v
-DTO / Mapper
-     |
-     v
-Respuesta JSON
-     |
-     v
-Cliente React
+
+```mermaid
+flowchart TD
+    client[Cliente React] -->|Solicitud HTTP · JWT si se requiere| filter[JwtAuthenticationFilter]
+    filter --> security[Spring Security]
+    security --> controller[Controller]
+    controller --> service[Service]
+    service --> repository[Repository]
+    repository --> database[(MySQL)]
+    database --> repository
+    repository --> service
+    service --> mapper[DTO / Mapper]
+    mapper -->|Respuesta JSON| client
+```
 Paso a paso
 1.	El usuario ejecuta una operación desde el panel.
 2.	El frontend construye la solicitud HTTP.
@@ -424,54 +363,43 @@ Esto significa:
 •	La primera ejecución comienza aproximadamente cinco segundos después del inicio de la aplicación.
 •	Las siguientes ejecuciones se realizan con un retraso de 60 segundos después de finalizar la ejecución anterior.
 Secuencia de monitoreo
-MonitoreoScheduler
-        |
-        v
-MonitoreoService
-        |
-        v
-Buscar cámaras no retiradas
-        |
-        v
-Verificar PING
-        |
-        v
-Verificar TCP (si tiene puerto)
-        |
-        v
-Obtener MAC (si responde)
-        |
-        v
-EvaluarEstado
-        |
-        v
-Determinar estado
-        |
-        v
-Actualizar cámara
-        |
-        v
-¿Cambió el estado?
-      /       \
-    SÍ         NO
-    |           |
-    v           v
-Guardar       Mantener
-historial     historial
-    |
-    v
-¿Corresponde notificar?
-    |
-    v
-Enviar alerta
+
+```mermaid
+flowchart TD
+    scheduler[MonitoreoScheduler] --> service[MonitoreoService]
+    service --> find[Buscar cámaras no retiradas]
+    find --> ping[Verificar ping]
+    ping --> hasPort{¿Tiene puerto configurado?}
+    hasPort -->|Sí| tcp[Verificar TCP]
+    hasPort -->|No| macCheck
+    tcp --> macCheck{¿Responde la cámara?}
+    macCheck -->|Sí| mac[Obtener y comparar MAC]
+    macCheck -->|No| evaluate[Evaluar estado]
+    mac --> evaluate
+    evaluate --> update[Determinar y actualizar estado]
+    update --> changed{¿Cambió el estado?}
+    changed -->|Sí| history[Guardar historial]
+    changed -->|No| notifyCheck
+    history --> notifyCheck{¿Corresponde notificar?}
+    notifyCheck -->|Sí| alert[Enviar alerta]
+    notifyCheck -->|No| done[Fin de la verificación]
+    alert --> done
+```
 Verificación de ping
 La clase responsable es:
 PingVerificador.java
 Ejecuta el comando nativo ping dependiendo del sistema operativo.
 En Windows utiliza:
+
+```powershell
 ping -n 1 -w 2000 DIRECCION_IP
+```
+
 En Linux utiliza:
+
+```bash
 ping -c 1 -W 2 DIRECCION_IP
+```
 El tiempo de espera configurado es de aproximadamente dos segundos.
 En Windows se comprueba la presencia de ttl= en la salida para evitar interpretar determinados mensajes de host inaccesible como respuestas satisfactorias.
 Verificación TCP
@@ -576,19 +504,14 @@ Un error de envío a un técnico se registra y no impide intentar enviar a los d
 Si no existen técnicos activos, el sistema registra un aviso en el log.
 3.8. Administración de cámaras
 El flujo de administración utiliza:
-CamaraController
-       |
-       v
-CamaraService
-       |
-       v
-CamaraMapper
-       |
-       v
-CamaraRepository
-       |
-       v
-MySQL
+
+```mermaid
+flowchart TD
+    controller[CamaraController] --> service[CamaraService]
+    service --> mapper[CamaraMapper]
+    mapper --> repository[CamaraRepository]
+    repository --> database[(MySQL)]
+```
 Las operaciones principales son:
 •	Crear una cámara.
 •	Listar cámaras activas.
@@ -778,25 +701,16 @@ En la versión del repositorio revisada no se encuentra una configuración de CI
 No se observan archivos de workflows de GitHub Actions, configuración de Jenkins ni otros pipelines automatizados.
 Actualmente, el proceso de construcción se realiza mediante los comandos de Maven y npm.
 Flujo de construcción actual
-Código fuente
-     |
-     v
-Compilación Backend
-     |
-     v
-Pruebas Maven
-     |
-     v
-Generación del JAR
-     |
-     v
-Build Frontend
-     |
-     v
-Generación de archivos estáticos
-     |
-     v
-Despliegue manual
+
+```mermaid
+flowchart LR
+    source[Código fuente] --> backend[Compilación del backend]
+    backend --> tests[Pruebas Maven]
+    tests --> jar[Generación del JAR]
+    jar --> frontend[Build del frontend]
+    frontend --> assets[Archivos estáticos]
+    assets --> deploy[Despliegue manual]
+```
 Automatización recomendada
 Para futuras versiones se recomienda implementar un pipeline que incluya:
 1.	Verificación de compilación Java.
@@ -818,10 +732,13 @@ Requisitos:
 •	Acceso a la red de cámaras.
 •	Acceso a Internet si se utilizan notificaciones externas.
 Ejemplo de ubicación:
+
+```text
 C:\monitoreo\
 │
 ├── estadoCamaras-0.0.1-SNAPSHOT.jar
 └── .env
+```
 Ejecución:
 cd C:\monitoreo
 
